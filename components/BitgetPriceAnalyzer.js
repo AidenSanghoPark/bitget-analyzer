@@ -16,6 +16,8 @@ const BitgetPriceMomentumAnalyzer = () => {
   const [symbol] = useState("ETHUSDT");
 
   const ws = useRef(null);
+  const reconnectTimeout = useRef(null);
+  const pingInterval = useRef(null);
   const priceHistory = useRef([]);
   const lastPrice = useRef(0);
   const lastUpdate = useRef(Date.now());
@@ -125,36 +127,56 @@ const BitgetPriceMomentumAnalyzer = () => {
     else if (score < -20) signalType = "DOWN";
 
     setSignal({ type: signalType, score });
-  }, [momentum, acceleration]);
-
-  const analyzeAndDisplay = useCallback(() => {
-    const now = Date.now();
-    if (now - lastUpdate.current < 1000) return;
-
-    lastUpdate.current = now;
-
-    const oneSecondAgo = now - 1000;
-    const priceOneSecAgo = priceHistory.current.filter((p) => p.time <= oneSecondAgo).slice(-1)[0];
-
-    if (priceOneSecAgo && lastPrice.current > 0) {
-      const change = lastPrice.current - priceOneSecAgo.price;
-      setPriceChange1s(change);
-    }
-
-    const recentChanges = priceHistory.current.slice(-15);
-    setPriceChanges(recentChanges);
-
-    if (priceHistory.current.length >= 3) {
-      analyzeMomentum();
-    }
-  }, [analyzeMomentum]);
+  }, []);
 
   useEffect(() => {
+    const analyzeAndDisplay = () => {
+      const now = Date.now();
+      if (now - lastUpdate.current < 1000) return;
+
+      lastUpdate.current = now;
+
+      const oneSecondAgo = now - 1000;
+      const priceOneSecAgo = priceHistory.current.filter((p) => p.time <= oneSecondAgo).slice(-1)[0];
+
+      if (priceOneSecAgo && lastPrice.current > 0) {
+        const change = lastPrice.current - priceOneSecAgo.price;
+        setPriceChange1s(change);
+      }
+
+      const recentChanges = priceHistory.current.slice(-15);
+      setPriceChanges(recentChanges);
+
+      if (priceHistory.current.length >= 3) {
+        analyzeMomentum();
+      }
+    };
+
     const connectWebSocket = () => {
+      if (ws.current && ws.current.readyState === WebSocket.CONNECTING) {
+        return;
+      }
+
+      if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+        ws.current.close();
+      }
+
       ws.current = new WebSocket("wss://ws.bitget.com/mix/v1/stream");
 
       ws.current.onopen = () => {
+        console.log("WebSocket connected");
         setConnected(true);
+
+        if (reconnectTimeout.current) {
+          clearTimeout(reconnectTimeout.current);
+          reconnectTimeout.current = null;
+        }
+
+        pingInterval.current = setInterval(() => {
+          if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+            ws.current.send("ping");
+          }
+        }, 30000);
 
         if (ws.current.readyState === WebSocket.OPEN) {
           ws.current.send(
@@ -187,6 +209,10 @@ const BitgetPriceMomentumAnalyzer = () => {
 
       ws.current.onmessage = (event) => {
         try {
+          if (event.data === "pong") {
+            return;
+          }
+
           const data = JSON.parse(event.data);
 
           if (data.data) {
@@ -207,11 +233,17 @@ const BitgetPriceMomentumAnalyzer = () => {
       };
 
       ws.current.onclose = () => {
+        console.log("WebSocket disconnected");
         setConnected(false);
-        setTimeout(() => {
-          if (!ws.current || ws.current.readyState === WebSocket.CLOSED) {
-            connectWebSocket();
-          }
+
+        if (pingInterval.current) {
+          clearInterval(pingInterval.current);
+          pingInterval.current = null;
+        }
+
+        reconnectTimeout.current = setTimeout(() => {
+          console.log("Attempting to reconnect...");
+          connectWebSocket();
         }, 5000);
       };
     };
@@ -221,11 +253,20 @@ const BitgetPriceMomentumAnalyzer = () => {
 
     return () => {
       clearInterval(interval);
+
+      if (pingInterval.current) {
+        clearInterval(pingInterval.current);
+      }
+
+      if (reconnectTimeout.current) {
+        clearTimeout(reconnectTimeout.current);
+      }
+
       if (ws.current) {
         ws.current.close();
       }
     };
-  }, [symbol, analyzeAndDisplay]);
+  }, []);
 
   const getSignalColor = (type) => {
     switch (type) {
@@ -293,12 +334,15 @@ const BitgetPriceMomentumAnalyzer = () => {
               Real-time Price Changes (1s intervals)
             </h2>
             <div className="space-y-1">
-              {priceChanges.map((change, idx) => (
-                <div key={idx} className="flex items-center gap-2">
-                  <span className="text-sm text-gray-400 w-20">{change.timestamp}</span>
-                  {getChangeBar(change.change)}
-                </div>
-              ))}
+              {priceChanges
+                .slice()
+                .reverse()
+                .map((change, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <span className="text-sm text-gray-400 w-20">{change.timestamp}</span>
+                    {getChangeBar(change.change)}
+                  </div>
+                ))}
               {priceChanges.length === 0 && <div className="text-gray-500 text-center py-8">Waiting for price changes...</div>}
             </div>
           </div>
