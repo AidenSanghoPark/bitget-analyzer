@@ -1,9 +1,11 @@
 "use client";
-import React, { useState, useEffect, useRef } from "react";
+
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { TrendingUp, TrendingDown, Activity, AlertCircle, Zap } from "lucide-react";
 
 const BitgetPriceMomentumAnalyzer = () => {
   const [currentPrice, setCurrentPrice] = useState(0);
+  const [priceChange1s, setPriceChange1s] = useState(0);
   const [priceChanges, setPriceChanges] = useState([]);
   const [momentum, setMomentum] = useState(0);
   const [trendStrength, setTrendStrength] = useState(0);
@@ -18,92 +20,8 @@ const BitgetPriceMomentumAnalyzer = () => {
   const lastPrice = useRef(0);
   const lastUpdate = useRef(Date.now());
 
-  useEffect(() => {
-    connectWebSocket();
-    const interval = setInterval(analyzeAndDisplay, 1000); // 1초마다 분석
-
-    return () => {
-      clearInterval(interval);
-      if (ws.current) {
-        ws.current.close();
-      }
-    };
-  }, []);
-
-  const connectWebSocket = () => {
-    ws.current = new WebSocket("wss://ws.bitget.com/mix/v1/stream");
-
-    ws.current.onopen = () => {
-      setConnected(true);
-
-      // 실시간 가격 구독
-      ws.current.send(
-        JSON.stringify({
-          op: "subscribe",
-          args: [
-            {
-              instType: "mc",
-              channel: "ticker",
-              instId: symbol,
-            },
-          ],
-        })
-      );
-
-      // 거래 데이터 구독
-      ws.current.send(
-        JSON.stringify({
-          op: "subscribe",
-          args: [
-            {
-              instType: "mc",
-              channel: "trade",
-              instId: symbol,
-            },
-          ],
-        })
-      );
-    };
-
-    ws.current.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-
-      if (data.data) {
-        if (data.arg?.channel === "ticker") {
-          updatePriceFromTicker(data.data[0]);
-        } else if (data.arg?.channel === "trade") {
-          updatePriceFromTrades(data.data);
-        }
-      }
-    };
-
-    ws.current.onerror = (error) => {
-      console.error("WebSocket error:", error);
-      setConnected(false);
-    };
-
-    ws.current.onclose = () => {
-      setConnected(false);
-      setTimeout(connectWebSocket, 5000);
-    };
-  };
-
-  const updatePriceFromTicker = (ticker) => {
-    const newPrice = parseFloat(ticker.last);
-    if (newPrice > 0) {
-      recordPriceChange(newPrice);
-    }
-  };
-
-  const updatePriceFromTrades = (trades) => {
-    trades.forEach((trade) => {
-      const price = parseFloat(trade.px);
-      recordPriceChange(price);
-    });
-  };
-
   const recordPriceChange = (newPrice) => {
-    if (!newPrice || newPrice <= 0) return; // 유효하지 않은 가격 무시
+    if (!newPrice || newPrice <= 0) return;
 
     if (lastPrice.current === 0) {
       lastPrice.current = newPrice;
@@ -124,7 +42,6 @@ const BitgetPriceMomentumAnalyzer = () => {
 
       priceHistory.current.push(changeRecord);
 
-      // 최근 30초 데이터만 유지
       const thirtySecondsAgo = now - 30000;
       priceHistory.current = priceHistory.current.filter((p) => p.time > thirtySecondsAgo);
 
@@ -133,28 +50,25 @@ const BitgetPriceMomentumAnalyzer = () => {
     }
   };
 
-  const analyzeAndDisplay = () => {
-    const now = Date.now();
-    if (now - lastUpdate.current < 1000) return; // 1초 간격 체크
-
-    lastUpdate.current = now;
-
-    // 최근 15개 변화 표시
-    const recentChanges = priceHistory.current.slice(-15);
-    setPriceChanges(recentChanges);
-
-    // 모멘텀 분석
-    if (priceHistory.current.length >= 3) {
-      analyzeMomentum();
+  const updatePriceFromTicker = (ticker) => {
+    const newPrice = parseFloat(ticker.last);
+    if (newPrice > 0) {
+      recordPriceChange(newPrice);
     }
   };
 
-  const analyzeMomentum = () => {
-    const recent = priceHistory.current.slice(-20); // 최근 10초
+  const updatePriceFromTrades = (trades) => {
+    trades.forEach((trade) => {
+      const price = parseFloat(trade.px);
+      recordPriceChange(price);
+    });
+  };
+
+  const analyzeMomentum = useCallback(() => {
+    const recent = priceHistory.current.slice(-20);
 
     if (recent.length === 0) return;
 
-    // 시간 가중 모멘텀
     let weightedChange = 0;
     let totalChange = 0;
 
@@ -167,7 +81,6 @@ const BitgetPriceMomentumAnalyzer = () => {
     const momentumScore = Math.min(100, Math.max(-100, weightedChange * 100));
     setMomentum(momentumScore);
 
-    // 추세 강도 (연속적인 상승/하락)
     let consecutive = 0;
     let lastDirection = null;
 
@@ -186,7 +99,6 @@ const BitgetPriceMomentumAnalyzer = () => {
 
     setTrendStrength(consecutive * (lastDirection || 0));
 
-    // 가속도
     if (recent.length >= 5) {
       const firstHalf = recent.slice(0, recent.length / 2);
       const secondHalf = recent.slice(recent.length / 2);
@@ -197,7 +109,6 @@ const BitgetPriceMomentumAnalyzer = () => {
       setAcceleration((secondAvg - firstAvg) * 100);
     }
 
-    // 통계
     if (recent.length > 0) {
       const changes = recent.map((c) => c.change);
       const maxUp = Math.max(...changes, 0);
@@ -205,7 +116,6 @@ const BitgetPriceMomentumAnalyzer = () => {
       setStats({ totalChange, maxUp, maxDown });
     }
 
-    // 신호 생성
     const score = momentumScore + consecutive * 10 + acceleration * 0.5;
 
     let signalType = "NEUTRAL";
@@ -215,7 +125,107 @@ const BitgetPriceMomentumAnalyzer = () => {
     else if (score < -20) signalType = "DOWN";
 
     setSignal({ type: signalType, score });
-  };
+  }, [momentum, acceleration]);
+
+  const analyzeAndDisplay = useCallback(() => {
+    const now = Date.now();
+    if (now - lastUpdate.current < 1000) return;
+
+    lastUpdate.current = now;
+
+    const oneSecondAgo = now - 1000;
+    const priceOneSecAgo = priceHistory.current.filter((p) => p.time <= oneSecondAgo).slice(-1)[0];
+
+    if (priceOneSecAgo && lastPrice.current > 0) {
+      const change = lastPrice.current - priceOneSecAgo.price;
+      setPriceChange1s(change);
+    }
+
+    const recentChanges = priceHistory.current.slice(-15);
+    setPriceChanges(recentChanges);
+
+    if (priceHistory.current.length >= 3) {
+      analyzeMomentum();
+    }
+  }, [analyzeMomentum]);
+
+  useEffect(() => {
+    const connectWebSocket = () => {
+      ws.current = new WebSocket("wss://ws.bitget.com/mix/v1/stream");
+
+      ws.current.onopen = () => {
+        setConnected(true);
+
+        if (ws.current.readyState === WebSocket.OPEN) {
+          ws.current.send(
+            JSON.stringify({
+              op: "subscribe",
+              args: [
+                {
+                  instType: "mc",
+                  channel: "ticker",
+                  instId: symbol,
+                },
+              ],
+            })
+          );
+
+          ws.current.send(
+            JSON.stringify({
+              op: "subscribe",
+              args: [
+                {
+                  instType: "mc",
+                  channel: "trade",
+                  instId: symbol,
+                },
+              ],
+            })
+          );
+        }
+      };
+
+      ws.current.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+
+          if (data.data) {
+            if (data.arg?.channel === "ticker") {
+              updatePriceFromTicker(data.data[0]);
+            } else if (data.arg?.channel === "trade") {
+              updatePriceFromTrades(data.data);
+            }
+          }
+        } catch (error) {
+          console.error("Message parsing error:", error);
+        }
+      };
+
+      ws.current.onerror = (error) => {
+        console.error("WebSocket error:", error);
+        setConnected(false);
+      };
+
+      ws.current.onclose = () => {
+        setConnected(false);
+        setTimeout(() => {
+          if (!ws.current || ws.current.readyState === WebSocket.CLOSED) {
+            connectWebSocket();
+          }
+        }, 5000);
+      };
+    };
+
+    connectWebSocket();
+    const interval = setInterval(analyzeAndDisplay, 1000);
+
+    return () => {
+      clearInterval(interval);
+      if (ws.current) {
+        ws.current.close();
+      }
+    };
+  }, [symbol, analyzeAndDisplay]);
 
   const getSignalColor = (type) => {
     switch (type) {
@@ -268,12 +278,15 @@ const BitgetPriceMomentumAnalyzer = () => {
           <div className="flex items-center gap-4">
             <span className="text-xl">{symbol}</span>
             <span className="text-2xl font-mono">${currentPrice > 0 ? currentPrice.toFixed(2) : "---"}</span>
+            <span className={`text-lg font-mono ${priceChange1s > 0 ? "text-green-400" : priceChange1s < 0 ? "text-red-400" : "text-gray-400"}`}>
+              {priceChange1s > 0 ? "+" : ""}
+              {priceChange1s.toFixed(2)}
+            </span>
             <span className={`text-sm ${connected ? "text-green-500" : "text-red-500"}`}>{connected ? "● Connected" : "● Disconnected"}</span>
           </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* 실시간 가격 변화 */}
           <div className="lg:col-span-2 bg-gray-800 rounded-lg p-4">
             <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
               <Activity className="w-5 h-5" />
@@ -290,9 +303,7 @@ const BitgetPriceMomentumAnalyzer = () => {
             </div>
           </div>
 
-          {/* 분석 패널 */}
           <div className="space-y-4">
-            {/* 모멘텀 */}
             <div className="bg-gray-800 rounded-lg p-4">
               <h3 className="text-lg font-semibold mb-2">Momentum</h3>
               <div className="text-3xl font-bold text-center">
@@ -304,7 +315,6 @@ const BitgetPriceMomentumAnalyzer = () => {
               <div className="text-sm text-gray-400 text-center">Time-weighted score</div>
             </div>
 
-            {/* 추세 강도 */}
             <div className="bg-gray-800 rounded-lg p-4">
               <h3 className="text-lg font-semibold mb-2">Trend Strength</h3>
               <div className="flex items-center justify-center gap-2">
@@ -320,7 +330,6 @@ const BitgetPriceMomentumAnalyzer = () => {
               <div className="text-sm text-gray-400 text-center">Consecutive moves</div>
             </div>
 
-            {/* 가속도 */}
             <div className="bg-gray-800 rounded-lg p-4">
               <h3 className="text-lg font-semibold mb-2 flex items-center gap-2">
                 <Zap className="w-5 h-5" />
@@ -335,9 +344,7 @@ const BitgetPriceMomentumAnalyzer = () => {
           </div>
         </div>
 
-        {/* 신호 및 통계 */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-          {/* 트레이딩 신호 */}
           <div className="bg-gray-800 rounded-lg p-4">
             <h2 className="text-xl font-semibold mb-4">Trading Signal</h2>
             <div className={`text-center p-4 rounded-lg ${getSignalColor(signal.type)}`}>
@@ -353,7 +360,6 @@ const BitgetPriceMomentumAnalyzer = () => {
             </div>
           </div>
 
-          {/* 10초 통계 */}
           <div className="bg-gray-800 rounded-lg p-4">
             <h2 className="text-xl font-semibold mb-4">Last 10s Statistics</h2>
             <div className="space-y-2">
@@ -373,7 +379,6 @@ const BitgetPriceMomentumAnalyzer = () => {
           </div>
         </div>
 
-        {/* 강한 신호 알림 */}
         {(signal.type === "STRONG_UP" || signal.type === "STRONG_DOWN") && (
           <div className={`fixed bottom-4 right-4 p-4 rounded-lg shadow-lg ${signal.type === "STRONG_UP" ? "bg-green-600" : "bg-red-600"} flex items-center gap-2 animate-pulse`}>
             <AlertCircle className="w-5 h-5" />
