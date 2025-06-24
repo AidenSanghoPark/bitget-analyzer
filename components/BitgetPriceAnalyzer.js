@@ -13,7 +13,7 @@ const BitgetPriceMomentumAnalyzer = () => {
   const [signal, setSignal] = useState({ type: "NEUTRAL", score: 0 });
   const [connected, setConnected] = useState(false);
   const [stats, setStats] = useState({ totalChange: 0, maxUp: 0, maxDown: 0 });
-  const [symbol, setSymbol] = useState("ETHUSDT");
+  const [symbol, setSymbol] = useState("BTCUSDT");
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [filteredSymbols, setFilteredSymbols] = useState([]);
@@ -586,16 +586,18 @@ const BitgetPriceMomentumAnalyzer = () => {
     <div className="min-h-screen bg-gray-900 text-white p-4">
       <div className="max-w-6xl mx-auto">
         <div className="mb-6">
-          <div className="flex items-center justify-between mb-4">
-            <h1 className="text-3xl font-bold">Price Momentum Analyzer</h1>
-            <div className="flex items-center gap-4">
+          <div className="flex flex-col gap-4 mb-4">
+            <h1 className="text-2xl md:text-3xl font-bold">Price Momentum Analyzer</h1>
+
+            {/* 컨트롤 버튼들 - 모바일에서는 세로 배치 */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
               {/* 속도 조절 컨트롤 */}
-              <div className="flex items-center gap-2 bg-gray-800 px-4 py-2 rounded-lg">
-                <span className="text-sm text-gray-300">업데이트 속도:</span>
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 bg-gray-800 px-3 py-2 rounded-lg">
+                <span className="text-xs sm:text-sm text-gray-300 whitespace-nowrap">업데이트 속도:</span>
                 <select
                   value={updateSpeed}
                   onChange={(e) => setUpdateSpeed(Number(e.target.value))}
-                  className="bg-gray-700 text-white px-3 py-1 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="bg-gray-700 text-white px-2 py-1 rounded text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-0"
                 >
                   <option value={100}>초고속 (0.1초) ⚡</option>
                   <option value={250}>고속 (0.25초) 🔥</option>
@@ -605,9 +607,13 @@ const BitgetPriceMomentumAnalyzer = () => {
                   <option value={5000}>매우 느림 (5초) 🔄</option>
                 </select>
               </div>
+
+              {/* 디버그 버튼 */}
               <button
                 onClick={() => setDebugMode(!debugMode)}
-                className={`px-4 py-2 rounded-lg text-sm transition-colors ${debugMode ? "bg-red-600 hover:bg-red-700 text-white" : "bg-gray-700 hover:bg-gray-600 text-gray-300"}`}
+                className={`px-3 py-2 rounded-lg text-xs sm:text-sm transition-colors whitespace-nowrap ${
+                  debugMode ? "bg-red-600 hover:bg-red-700 text-white" : "bg-gray-700 hover:bg-gray-600 text-gray-300"
+                }`}
               >
                 {debugMode ? "🔍 디버그 끄기" : "🔍 디버그 켜기"}
               </button>
@@ -618,28 +624,28 @@ const BitgetPriceMomentumAnalyzer = () => {
           <div className="relative mb-4">
             <button
               onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-              className="flex items-center gap-3 bg-gray-800 hover:bg-gray-700 px-4 py-3 rounded-lg transition-colors min-w-[250px] relative"
+              className="flex items-center gap-3 bg-gray-800 hover:bg-gray-700 px-3 py-3 rounded-lg transition-colors w-full sm:min-w-[250px] relative"
               disabled={isLoadingSymbols}
             >
               {isLoadingSymbols ? (
                 <>
                   <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                  <span>코인 목록 로딩중...</span>
+                  <span className="text-sm sm:text-base">코인 목록 로딩중...</span>
                 </>
               ) : (
                 <>
-                  <span className="text-2xl">{selectedSymbol?.icon}</span>
-                  <div className="flex-1 text-left">
-                    <div className="font-semibold">{selectedSymbol?.label}</div>
-                    <div className="text-sm text-gray-400">{symbol}</div>
+                  <span className="text-xl sm:text-2xl">{selectedSymbol?.icon}</span>
+                  <div className="flex-1 text-left min-w-0">
+                    <div className="font-semibold text-sm sm:text-base truncate">{selectedSymbol?.label}</div>
+                    <div className="text-xs sm:text-sm text-gray-400">{symbol}</div>
                   </div>
-                  <ChevronDown className={`w-5 h-5 transition-transform ${isDropdownOpen ? "rotate-180" : ""}`} />
+                  <ChevronDown className={`w-4 h-4 sm:w-5 sm:h-5 transition-transform flex-shrink-0 ${isDropdownOpen ? "rotate-180" : ""}`} />
                 </>
               )}
             </button>
 
             {isDropdownOpen && !isLoadingSymbols && (
-              <div className="absolute top-full left-0 mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-10 min-w-[250px] max-h-96 overflow-hidden">
+              <div className="absolute top-full left-0 mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-10 w-full sm:min-w-[250px] max-h-96 overflow-hidden">
                 {/* 검색창 */}
                 <div className="p-3 border-b border-gray-700">
                   <input
@@ -697,24 +703,25 @@ const BitgetPriceMomentumAnalyzer = () => {
             )}
           </div>
 
-          <div className="flex items-center gap-4">
-            <span className="text-2xl font-mono">${currentPrice > 0 ? currentPrice.toFixed(2) : "---"}</span>
-            <span className={`text-lg font-mono ${priceChange1s > 0 ? "text-green-400" : priceChange1s < 0 ? "text-red-400" : "text-gray-400"}`}>
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4">
+            <span className="text-lg sm:text-2xl font-mono">${currentPrice > 0 ? currentPrice.toFixed(2) : "---"}</span>
+            <span className={`text-base sm:text-lg font-mono ${priceChange1s > 0 ? "text-green-400" : priceChange1s < 0 ? "text-red-400" : "text-gray-400"}`}>
               {priceChange1s > 0 ? "+" : ""}
               {priceChange1s.toFixed(2)}
             </span>
-            <span className={`text-sm ${connected ? "text-green-500" : "text-red-500"}`}>{connected ? "● Connected" : "● Disconnected"}</span>
+            <span className={`text-xs sm:text-sm ${connected ? "text-green-500" : "text-red-500"}`}>{connected ? "● Connected" : "● Disconnected"}</span>
           </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="lg:col-span-2 bg-gray-800 rounded-lg p-4">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-semibold flex items-center gap-2">
-                <Activity className="w-5 h-5" />
-                {getSpeedTitle()}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4">
+              <h2 className="text-lg sm:text-xl font-semibold flex items-center gap-2 mb-2 sm:mb-0">
+                <Activity className="w-4 h-4 sm:w-5 sm:h-5" />
+                <span className="hidden sm:inline">{getSpeedTitle()}</span>
+                <span className="sm:hidden">실시간 가격 변화</span>
               </h2>
-              <div className="text-sm text-gray-400">현재: {updateSpeed}ms 간격</div>
+              <div className="text-xs sm:text-sm text-gray-400">현재: {updateSpeed}ms 간격</div>
             </div>
             <div className="space-y-1">
               {priceChanges
