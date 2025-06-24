@@ -15,11 +15,161 @@ const BitgetPriceMomentumAnalyzer = () => {
   const [stats, setStats] = useState({ totalChange: 0, maxUp: 0, maxDown: 0 });
   const [symbol, setSymbol] = useState("ETHUSDT");
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [filteredSymbols, setFilteredSymbols] = useState([]);
+  const [debugMode, setDebugMode] = useState(false);
+  const [debugLogs, setDebugLogs] = useState([]);
+  const [rawApiData, setRawApiData] = useState(null);
+  const [updateSpeed, setUpdateSpeed] = useState(500); // 기본 0.5초
 
-  const symbols = [
+  const [symbols, setSymbols] = useState([
     { value: "BTCUSDT", label: "비트코인 (BTC)", icon: "₿" },
     { value: "ETHUSDT", label: "이더리움 (ETH)", icon: "Ξ" },
-  ];
+  ]);
+  const [isLoadingSymbols, setIsLoadingSymbols] = useState(false);
+
+  // 업데이트 속도에 따른 제목 생성
+  const getSpeedTitle = () => {
+    const speedMap = {
+      100: "Real-time Price Changes (0.1s intervals) ⚡",
+      250: "Real-time Price Changes (0.25s intervals) 🔥",
+      500: "Real-time Price Changes (0.5s intervals) 🚀",
+      1000: "Real-time Price Changes (1s intervals) 📊",
+      2000: "Real-time Price Changes (2s intervals) 🐌",
+      5000: "Real-time Price Changes (5s intervals) 🔄",
+    };
+    return speedMap[updateSpeed] || `Real-time Price Changes (${updateSpeed}ms intervals)`;
+  };
+  const addDebugLog = (type, data) => {
+    if (!debugMode) return;
+
+    const logEntry = {
+      id: Date.now(),
+      time: new Date().toLocaleTimeString(),
+      type: type,
+      data: data,
+    };
+
+    setDebugLogs((prev) => [logEntry, ...prev.slice(0, 19)]); // 최대 20개 로그
+  };
+  const getCoinIcon = (symbol) => {
+    const iconMap = {
+      BTC: "₿",
+      ETH: "Ξ",
+      ADA: "₳",
+      LTC: "Ł",
+      XRP: "✕",
+      DOT: "●",
+      LINK: "🔗",
+      UNI: "🦄",
+      MATIC: "◆",
+      SOL: "◎",
+      AVAX: "▲",
+      ATOM: "⚛",
+      FTM: "👻",
+      NEAR: "🌐",
+      ALGO: "△",
+    };
+
+    const coinName = symbol.replace("USDT", "").replace("BUSD", "").replace("USDC", "");
+    return iconMap[coinName] || "🪙";
+  };
+
+  // 코인 한글명 매핑
+  const getCoinKoreanName = (symbol) => {
+    if (!symbol || typeof symbol !== "string") return "Unknown";
+
+    const nameMap = {
+      BTCUSDT: "비트코인",
+      ETHUSDT: "이더리움",
+      ADAUSDT: "에이다",
+      LTCUSDT: "라이트코인",
+      XRPUSDT: "리플",
+      DOTUSDT: "폴카닷",
+      LINKUSDT: "체인링크",
+      UNIUSDT: "유니스왑",
+      MATICUSDT: "폴리곤",
+      SOLUSDT: "솔라나",
+      AVAXUSDT: "아발란체",
+      ATOMUSDT: "코스모스",
+      FTMUSDT: "팬텀",
+      NEARUSDT: "니어",
+      ALGOUSDT: "알고랜드",
+    };
+
+    const coinName = symbol.replace("USDT", "").replace("BUSD", "").replace("USDC", "");
+    return nameMap[symbol] || coinName;
+  };
+
+  // API에서 코인 목록 가져오기
+  const fetchAvailableSymbols = async () => {
+    setIsLoadingSymbols(true);
+    addDebugLog("API_REQUEST", "Bitget V2 API 호출 시작");
+
+    try {
+      const response = await fetch("https://api.bitget.com/api/v2/mix/market/contracts?productType=USDT-FUTURES");
+      const data = await response.json();
+
+      addDebugLog("API_RESPONSE", {
+        status: response.status,
+        code: data.code,
+        dataLength: data.data?.length || 0,
+        firstItem: data.data?.[0] || null,
+      });
+
+      setRawApiData(data); // 원본 데이터 저장
+
+      if (data.code === "00000" && data.data) {
+        // V2 API는 이미 USDT 선물만 반환하므로 추가 필터링 불필요
+        const allSymbols = data.data
+          .filter((item) => item && item.symbol && item.baseCoin) // null 체크 추가
+          .map((item) => ({
+            value: item.symbol,
+            label: `${getCoinKoreanName(item.symbol)} (${item.baseCoin})`,
+            icon: getCoinIcon(item.symbol),
+            baseCoin: item.baseCoin,
+            searchText: `${item.baseCoin} ${getCoinKoreanName(item.symbol)} ${item.symbol}`.toLowerCase(),
+            rawData: item, // 원본 데이터도 포함
+          }))
+          .sort((a, b) => {
+            // 인기 코인들을 앞에, 나머지는 알파벳 순
+            const popularOrder = ["BTC", "ETH", "ADA", "LTC", "XRP", "DOT", "LINK", "UNI", "MATIC", "SOL", "AVAX", "ATOM"];
+            const aIndex = popularOrder.indexOf(a.baseCoin);
+            const bIndex = popularOrder.indexOf(b.baseCoin);
+
+            if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
+            if (aIndex !== -1) return -1;
+            if (bIndex !== -1) return 1;
+            return a.baseCoin.localeCompare(b.baseCoin);
+          });
+
+        setSymbols(allSymbols);
+        setFilteredSymbols(allSymbols);
+        addDebugLog("SYMBOLS_PROCESSED", `${allSymbols.length}개 코인 처리 완료`);
+      }
+    } catch (error) {
+      console.error("코인 목록을 가져오는데 실패했습니다:", error);
+      addDebugLog("API_ERROR", error.message);
+      // 실패시 기본값 유지
+    } finally {
+      setIsLoadingSymbols(false);
+    }
+  };
+
+  // 검색 필터링
+  useEffect(() => {
+    if (!searchTerm.trim()) {
+      setFilteredSymbols(symbols);
+    } else {
+      const filtered = symbols.filter((symbol) => symbol.searchText && symbol.searchText.includes(searchTerm.toLowerCase()));
+      setFilteredSymbols(filtered);
+    }
+  }, [searchTerm, symbols]);
+
+  // 컴포넌트 마운트시 코인 목록 가져오기
+  useEffect(() => {
+    fetchAvailableSymbols();
+  }, []);
 
   const ws = useRef(null);
   const reconnectTimeout = useRef(null);
@@ -29,16 +179,23 @@ const BitgetPriceMomentumAnalyzer = () => {
   const lastUpdate = useRef(Date.now());
 
   const recordPriceChange = (newPrice) => {
-    if (!newPrice || newPrice <= 0) return;
+    addDebugLog("PRICE_RECORD_ATTEMPT", { newPrice, lastPrice: lastPrice.current });
+
+    if (!newPrice || newPrice <= 0) {
+      addDebugLog("PRICE_RECORD_ERROR", "유효하지 않은 가격");
+      return;
+    }
 
     if (lastPrice.current === 0) {
       lastPrice.current = newPrice;
       setCurrentPrice(newPrice);
+      addDebugLog("PRICE_RECORD_INIT", `초기 가격 설정: ${newPrice}`);
       return;
     }
 
     const priceChange = newPrice - lastPrice.current;
 
+    // 가격 데이터만 저장하고, 화면 업데이트는 analyzeAndDisplay에서 처리
     if (priceChange !== 0) {
       const now = Date.now();
       const changeRecord = {
@@ -49,26 +206,62 @@ const BitgetPriceMomentumAnalyzer = () => {
       };
 
       priceHistory.current.push(changeRecord);
+      addDebugLog("PRICE_CHANGE_RECORDED", {
+        change: priceChange,
+        newPrice: newPrice,
+        historyLength: priceHistory.current.length,
+      });
 
       const thirtySecondsAgo = now - 30000;
       priceHistory.current = priceHistory.current.filter((p) => p.time > thirtySecondsAgo);
 
       lastPrice.current = newPrice;
-      setCurrentPrice(newPrice);
+    } else {
+      addDebugLog("PRICE_NO_CHANGE", "가격 변화 없음");
+      lastPrice.current = newPrice; // 가격이 같아도 업데이트
     }
   };
 
   const updatePriceFromTicker = (ticker) => {
-    const newPrice = parseFloat(ticker.last);
-    if (newPrice > 0) {
-      recordPriceChange(newPrice);
+    if (!ticker) {
+      addDebugLog("TICKER_ERROR", "ticker 데이터가 null입니다");
+      return;
+    }
+
+    // V2 API에서는 'last' 대신 다른 필드명을 사용할 수 있음
+    const price = parseFloat(ticker.last || ticker.lastPr || ticker.price || ticker.close);
+    addDebugLog("TICKER_PRICE_PARSE", {
+      rawTicker: ticker,
+      parsedPrice: price,
+      availableFields: Object.keys(ticker),
+    });
+
+    if (price > 0) {
+      recordPriceChange(price);
+    } else {
+      addDebugLog("TICKER_ERROR", `가격 파싱 실패: ${JSON.stringify(ticker)}`);
     }
   };
 
   const updatePriceFromTrades = (trades) => {
-    trades.forEach((trade) => {
-      const price = parseFloat(trade.px);
-      recordPriceChange(price);
+    if (!trades || !Array.isArray(trades)) {
+      addDebugLog("TRADE_ERROR", "trades 데이터가 배열이 아닙니다");
+      return;
+    }
+
+    trades.forEach((trade, index) => {
+      // V2 API에서는 'px' 대신 다른 필드명을 사용할 수 있음
+      const price = parseFloat(trade.px || trade.price || trade.fillPrice);
+      addDebugLog("TRADE_PRICE_PARSE", {
+        tradeIndex: index,
+        rawTrade: trade,
+        parsedPrice: price,
+        availableFields: Object.keys(trade),
+      });
+
+      if (price > 0) {
+        recordPriceChange(price);
+      }
     });
   };
 
@@ -156,11 +349,12 @@ const BitgetPriceMomentumAnalyzer = () => {
     setSignal({ type: "NEUTRAL", score: 0 });
     setStats({ totalChange: 0, maxUp: 0, maxDown: 0 });
 
-    ws.current = new WebSocket("wss://ws.bitget.com/mix/v1/stream");
+    ws.current = new WebSocket("wss://ws.bitget.com/v2/ws/public");
 
     ws.current.onopen = () => {
       console.log("WebSocket connected");
       setConnected(true);
+      addDebugLog("WEBSOCKET", "웹소켓 연결 성공");
 
       if (reconnectTimeout.current) {
         clearTimeout(reconnectTimeout.current);
@@ -170,55 +364,79 @@ const BitgetPriceMomentumAnalyzer = () => {
       pingInterval.current = setInterval(() => {
         if (ws.current && ws.current.readyState === WebSocket.OPEN) {
           ws.current.send("ping");
+          addDebugLog("WEBSOCKET", "Ping 전송");
         }
       }, 30000);
 
       if (ws.current.readyState === WebSocket.OPEN) {
-        ws.current.send(
-          JSON.stringify({
-            op: "subscribe",
-            args: [
-              {
-                instType: "mc",
-                channel: "ticker",
-                instId: symbol,
-              },
-            ],
-          })
-        );
+        const tickerSubscription = {
+          op: "subscribe",
+          args: [
+            {
+              instType: "USDT-FUTURES",
+              channel: "ticker",
+              instId: symbol,
+            },
+          ],
+        };
 
-        ws.current.send(
-          JSON.stringify({
-            op: "subscribe",
-            args: [
-              {
-                instType: "mc",
-                channel: "trade",
-                instId: symbol,
-              },
-            ],
-          })
-        );
+        const tradeSubscription = {
+          op: "subscribe",
+          args: [
+            {
+              instType: "USDT-FUTURES",
+              channel: "trade",
+              instId: symbol,
+            },
+          ],
+        };
+
+        ws.current.send(JSON.stringify(tickerSubscription));
+        ws.current.send(JSON.stringify(tradeSubscription));
+
+        addDebugLog("WEBSOCKET_SUBSCRIBE", {
+          symbol: symbol,
+          subscriptions: ["ticker", "trade"],
+          instType: "USDT-FUTURES",
+        });
       }
     };
 
     ws.current.onmessage = (event) => {
       try {
         if (event.data === "pong") {
+          addDebugLog("WEBSOCKET", "Pong 받음");
           return;
         }
 
         const data = JSON.parse(event.data);
+        addDebugLog("WEBSOCKET_DATA_RAW", data);
 
-        if (data.data) {
+        // V2 API 응답 구조 분석
+        if (data.action && data.data) {
+          addDebugLog("WEBSOCKET_DATA_STRUCTURED", {
+            action: data.action,
+            arg: data.arg,
+            dataLength: data.data.length,
+            firstDataItem: data.data[0],
+          });
+
           if (data.arg?.channel === "ticker") {
+            addDebugLog("TICKER_DATA", data.data[0]);
             updatePriceFromTicker(data.data[0]);
           } else if (data.arg?.channel === "trade") {
+            addDebugLog("TRADE_DATA", data.data);
             updatePriceFromTrades(data.data);
           }
+        } else if (data.event) {
+          // 구독 확인 또는 에러 메시지
+          addDebugLog("WEBSOCKET_EVENT", data);
+        } else {
+          addDebugLog("WEBSOCKET_UNKNOWN", "알 수 없는 메시지 형식");
         }
       } catch (error) {
         console.error("Message parsing error:", error);
+        addDebugLog("WEBSOCKET_ERROR", `메시지 파싱 에러: ${error.message}`);
       }
     };
 
@@ -243,35 +461,11 @@ const BitgetPriceMomentumAnalyzer = () => {
     };
   }, [symbol]);
 
+  // 웹소켓 연결 (속도 변경과 무관)
   useEffect(() => {
-    const analyzeAndDisplay = () => {
-      const now = Date.now();
-      if (now - lastUpdate.current < 1000) return;
-
-      lastUpdate.current = now;
-
-      const oneSecondAgo = now - 1000;
-      const priceOneSecAgo = priceHistory.current.filter((p) => p.time <= oneSecondAgo).slice(-1)[0];
-
-      if (priceOneSecAgo && lastPrice.current > 0) {
-        const change = lastPrice.current - priceOneSecAgo.price;
-        setPriceChange1s(change);
-      }
-
-      const recentChanges = priceHistory.current.slice(-15);
-      setPriceChanges(recentChanges);
-
-      if (priceHistory.current.length >= 3) {
-        analyzeMomentum();
-      }
-    };
-
     connectWebSocket();
-    const interval = setInterval(analyzeAndDisplay, 1000);
 
     return () => {
-      clearInterval(interval);
-
       if (pingInterval.current) {
         clearInterval(pingInterval.current);
       }
@@ -285,10 +479,62 @@ const BitgetPriceMomentumAnalyzer = () => {
       }
     };
   }, [connectWebSocket, analyzeMomentum]);
+  useEffect(() => {
+    const analyzeAndDisplay = () => {
+      const now = Date.now();
+      if (now - lastUpdate.current < updateSpeed) return;
+
+      lastUpdate.current = now;
+
+      // 속도 설정에 따라 화면 업데이트
+      setCurrentPrice(lastPrice.current);
+
+      // 가격 변화 계산 및 화면 업데이트
+      if (priceHistory.current.length >= 2) {
+        const recent = priceHistory.current.slice(-10);
+        const oneSecondAgo = now - 1000;
+
+        let closestPrice = null;
+        let minTimeDiff = Infinity;
+
+        for (const record of recent) {
+          const timeDiff = Math.abs(record.time - oneSecondAgo);
+          if (timeDiff < minTimeDiff && timeDiff < 2000) {
+            minTimeDiff = timeDiff;
+            closestPrice = record.price;
+          }
+        }
+
+        if (closestPrice && lastPrice.current > 0) {
+          const change = lastPrice.current - closestPrice;
+          setPriceChange1s(change);
+        }
+
+        if (recent.length >= 2) {
+          const previousPrice = recent[recent.length - 2].price;
+          const instantChange = lastPrice.current - previousPrice;
+          if (Math.abs(instantChange) > 0.01) {
+            setPriceChange1s(instantChange);
+          }
+        }
+      }
+
+      const recentChanges = priceHistory.current.slice(-15);
+      setPriceChanges(recentChanges);
+
+      if (priceHistory.current.length >= 3) {
+        analyzeMomentum();
+      }
+    };
+
+    const interval = setInterval(analyzeAndDisplay, updateSpeed);
+    return () => clearInterval(interval);
+  }, [updateSpeed]); // updateSpeed가 변경될 때만 인터벌 재설정
 
   const handleSymbolChange = (newSymbol) => {
     setSymbol(newSymbol);
     setIsDropdownOpen(false);
+    setSearchTerm(""); // 검색어 초기화
   };
 
   const getSignalColor = (type) => {
@@ -340,34 +586,113 @@ const BitgetPriceMomentumAnalyzer = () => {
     <div className="min-h-screen bg-gray-900 text-white p-4">
       <div className="max-w-6xl mx-auto">
         <div className="mb-6">
-          <h1 className="text-3xl font-bold mb-4">Price Momentum Analyzer</h1>
+          <div className="flex items-center justify-between mb-4">
+            <h1 className="text-3xl font-bold">Price Momentum Analyzer</h1>
+            <div className="flex items-center gap-4">
+              {/* 속도 조절 컨트롤 */}
+              <div className="flex items-center gap-2 bg-gray-800 px-4 py-2 rounded-lg">
+                <span className="text-sm text-gray-300">업데이트 속도:</span>
+                <select
+                  value={updateSpeed}
+                  onChange={(e) => setUpdateSpeed(Number(e.target.value))}
+                  className="bg-gray-700 text-white px-3 py-1 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value={100}>초고속 (0.1초) ⚡</option>
+                  <option value={250}>고속 (0.25초) 🔥</option>
+                  <option value={500}>빠름 (0.5초) 🚀</option>
+                  <option value={1000}>보통 (1초) 📊</option>
+                  <option value={2000}>느림 (2초) 🐌</option>
+                  <option value={5000}>매우 느림 (5초) 🔄</option>
+                </select>
+              </div>
+              <button
+                onClick={() => setDebugMode(!debugMode)}
+                className={`px-4 py-2 rounded-lg text-sm transition-colors ${debugMode ? "bg-red-600 hover:bg-red-700 text-white" : "bg-gray-700 hover:bg-gray-600 text-gray-300"}`}
+              >
+                {debugMode ? "🔍 디버그 끄기" : "🔍 디버그 켜기"}
+              </button>
+            </div>
+          </div>
 
           {/* 심볼 선택 드롭다운 */}
           <div className="relative mb-4">
-            <button onClick={() => setIsDropdownOpen(!isDropdownOpen)} className="flex items-center gap-3 bg-gray-800 hover:bg-gray-700 px-4 py-3 rounded-lg transition-colors min-w-[200px]">
-              <span className="text-2xl">{selectedSymbol?.icon}</span>
-              <div className="flex-1 text-left">
-                <div className="font-semibold">{selectedSymbol?.label}</div>
-                <div className="text-sm text-gray-400">{symbol}</div>
-              </div>
-              <ChevronDown className={`w-5 h-5 transition-transform ${isDropdownOpen ? "rotate-180" : ""}`} />
+            <button
+              onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+              className="flex items-center gap-3 bg-gray-800 hover:bg-gray-700 px-4 py-3 rounded-lg transition-colors min-w-[250px] relative"
+              disabled={isLoadingSymbols}
+            >
+              {isLoadingSymbols ? (
+                <>
+                  <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  <span>코인 목록 로딩중...</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-2xl">{selectedSymbol?.icon}</span>
+                  <div className="flex-1 text-left">
+                    <div className="font-semibold">{selectedSymbol?.label}</div>
+                    <div className="text-sm text-gray-400">{symbol}</div>
+                  </div>
+                  <ChevronDown className={`w-5 h-5 transition-transform ${isDropdownOpen ? "rotate-180" : ""}`} />
+                </>
+              )}
             </button>
 
-            {isDropdownOpen && (
-              <div className="absolute top-full left-0 mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-10 min-w-[200px]">
-                {symbols.map((symbolOption) => (
-                  <button
-                    key={symbolOption.value}
-                    onClick={() => handleSymbolChange(symbolOption.value)}
-                    className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-700 transition-colors ${symbol === symbolOption.value ? "bg-gray-700" : ""}`}
-                  >
-                    <span className="text-2xl">{symbolOption.icon}</span>
-                    <div className="flex-1 text-left">
-                      <div className="font-semibold">{symbolOption.label}</div>
-                      <div className="text-sm text-gray-400">{symbolOption.value}</div>
+            {isDropdownOpen && !isLoadingSymbols && (
+              <div className="absolute top-full left-0 mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-10 min-w-[250px] max-h-96 overflow-hidden">
+                {/* 검색창 */}
+                <div className="p-3 border-b border-gray-700">
+                  <input
+                    type="text"
+                    placeholder="코인 검색... (예: BTC, 비트코인)"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full bg-gray-700 text-white px-3 py-2 rounded-md text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    autoFocus
+                  />
+                  <div className="text-xs text-gray-400 mt-1">
+                    전체: {symbols.length}개 | 검색결과: {filteredSymbols.length}개
+                  </div>
+                </div>
+
+                {/* 코인 목록 */}
+                <div className="max-h-80 overflow-y-auto">
+                  {filteredSymbols.length > 0 ? (
+                    filteredSymbols.map((symbolOption) => (
+                      <button
+                        key={symbolOption.value}
+                        onClick={() => handleSymbolChange(symbolOption.value)}
+                        className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-700 transition-colors ${symbol === symbolOption.value ? "bg-gray-700 border-l-4 border-blue-500" : ""}`}
+                      >
+                        <span className="text-2xl">{symbolOption.icon}</span>
+                        <div className="flex-1 text-left">
+                          <div className="font-semibold">{symbolOption.label}</div>
+                          <div className="text-sm text-gray-400">{symbolOption.value}</div>
+                        </div>
+                        {symbol === symbolOption.value && <span className="text-green-400">✓</span>}
+                      </button>
+                    ))
+                  ) : (
+                    <div className="p-4 text-center text-gray-400">
+                      <div className="text-lg mb-2">🔍</div>
+                      <div>검색 결과가 없습니다</div>
+                      <div className="text-sm mt-1">다른 검색어를 시도해보세요</div>
                     </div>
+                  )}
+                </div>
+
+                {/* 하단 정보 */}
+                <div className="p-2 border-t border-gray-700 bg-gray-900">
+                  <button
+                    onClick={() => {
+                      fetchAvailableSymbols();
+                      setSearchTerm("");
+                    }}
+                    className="w-full text-xs text-blue-400 hover:text-blue-300 py-1"
+                  >
+                    🔄 목록 새로고침
                   </button>
-                ))}
+                </div>
               </div>
             )}
           </div>
@@ -384,10 +709,13 @@ const BitgetPriceMomentumAnalyzer = () => {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="lg:col-span-2 bg-gray-800 rounded-lg p-4">
-            <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
-              <Activity className="w-5 h-5" />
-              Real-time Price Changes (1s intervals)
-            </h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold flex items-center gap-2">
+                <Activity className="w-5 h-5" />
+                {getSpeedTitle()}
+              </h2>
+              <div className="text-sm text-gray-400">현재: {updateSpeed}ms 간격</div>
+            </div>
             <div className="space-y-1">
               {priceChanges
                 .slice()
@@ -482,6 +810,73 @@ const BitgetPriceMomentumAnalyzer = () => {
           <div className={`fixed bottom-4 right-4 p-4 rounded-lg shadow-lg ${signal.type === "STRONG_UP" ? "bg-green-600" : "bg-red-600"} flex items-center gap-2 animate-pulse`}>
             <AlertCircle className="w-5 h-5" />
             <span className="font-semibold">{signal.type === "STRONG_UP" ? "강한 상승 압력 감지!" : "강한 하락 압력 감지!"}</span>
+          </div>
+        )}
+
+        {/* 디버그 패널 */}
+        {debugMode && (
+          <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* 웹소켓 로그 */}
+            <div className="bg-gray-800 rounded-lg p-4">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold">🔍 실시간 로그</h3>
+                <button onClick={() => setDebugLogs([])} className="text-xs bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded">
+                  로그 지우기
+                </button>
+              </div>
+              <div className="space-y-2 max-h-96 overflow-y-auto">
+                {debugLogs.map((log) => (
+                  <div key={log.id} className="bg-gray-900 p-3 rounded text-sm">
+                    <div className="flex items-center justify-between mb-1">
+                      <span
+                        className={`font-mono text-xs px-2 py-1 rounded ${
+                          log.type.includes("ERROR") ? "bg-red-600" : log.type.includes("WEBSOCKET") ? "bg-blue-600" : log.type.includes("API") ? "bg-green-600" : "bg-yellow-600"
+                        }`}
+                      >
+                        {log.type}
+                      </span>
+                      <span className="text-gray-400 text-xs">{log.time}</span>
+                    </div>
+                    <pre className="text-xs text-gray-300 whitespace-pre-wrap overflow-hidden">{typeof log.data === "object" ? JSON.stringify(log.data, null, 2) : log.data}</pre>
+                  </div>
+                ))}
+                {debugLogs.length === 0 && <div className="text-center text-gray-500 py-8">로그가 없습니다</div>}
+              </div>
+            </div>
+
+            {/* API 원본 데이터 */}
+            <div className="bg-gray-800 rounded-lg p-4">
+              <h3 className="text-lg font-semibold mb-4">📊 API 원본 데이터</h3>
+              <div className="max-h-96 overflow-y-auto">
+                {rawApiData ? (
+                  <div className="space-y-4">
+                    <div className="bg-gray-900 p-3 rounded">
+                      <h4 className="font-semibold mb-2 text-green-400">API 응답 정보</h4>
+                      <div className="text-sm space-y-1">
+                        <div>
+                          응답 코드: <span className="text-yellow-300">{rawApiData.code}</span>
+                        </div>
+                        <div>
+                          메시지: <span className="text-yellow-300">{rawApiData.msg}</span>
+                        </div>
+                        <div>
+                          총 코인 수: <span className="text-yellow-300">{rawApiData.data?.length || 0}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {rawApiData.data && rawApiData.data[0] && (
+                      <div className="bg-gray-900 p-3 rounded">
+                        <h4 className="font-semibold mb-2 text-blue-400">첫 번째 코인 샘플</h4>
+                        <pre className="text-xs text-gray-300 whitespace-pre-wrap">{JSON.stringify(rawApiData.data[0], null, 2)}</pre>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-center text-gray-500 py-8">API 데이터를 불러오는 중...</div>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </div>
