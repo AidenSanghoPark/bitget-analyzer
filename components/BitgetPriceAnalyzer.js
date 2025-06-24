@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { TrendingUp, TrendingDown, Activity, AlertCircle, Zap } from "lucide-react";
+import { TrendingUp, TrendingDown, Activity, AlertCircle, Zap, ChevronDown } from "lucide-react";
 
 const BitgetPriceMomentumAnalyzer = () => {
   const [currentPrice, setCurrentPrice] = useState(0);
@@ -13,7 +13,13 @@ const BitgetPriceMomentumAnalyzer = () => {
   const [signal, setSignal] = useState({ type: "NEUTRAL", score: 0 });
   const [connected, setConnected] = useState(false);
   const [stats, setStats] = useState({ totalChange: 0, maxUp: 0, maxDown: 0 });
-  const [symbol] = useState("ETHUSDT");
+  const [symbol, setSymbol] = useState("ETHUSDT");
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+
+  const symbols = [
+    { value: "BTCUSDT", label: "비트코인 (BTC)", icon: "₿" },
+    { value: "ETHUSDT", label: "이더리움 (ETH)", icon: "Ξ" },
+  ];
 
   const ws = useRef(null);
   const reconnectTimeout = useRef(null);
@@ -129,6 +135,114 @@ const BitgetPriceMomentumAnalyzer = () => {
     setSignal({ type: signalType, score });
   }, []);
 
+  const connectWebSocket = useCallback(() => {
+    if (ws.current && ws.current.readyState === WebSocket.CONNECTING) {
+      return;
+    }
+
+    if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+      ws.current.close();
+    }
+
+    // 심볼 변경 시 데이터 초기화
+    priceHistory.current = [];
+    lastPrice.current = 0;
+    setCurrentPrice(0);
+    setPriceChange1s(0);
+    setPriceChanges([]);
+    setMomentum(0);
+    setTrendStrength(0);
+    setAcceleration(0);
+    setSignal({ type: "NEUTRAL", score: 0 });
+    setStats({ totalChange: 0, maxUp: 0, maxDown: 0 });
+
+    ws.current = new WebSocket("wss://ws.bitget.com/mix/v1/stream");
+
+    ws.current.onopen = () => {
+      console.log("WebSocket connected");
+      setConnected(true);
+
+      if (reconnectTimeout.current) {
+        clearTimeout(reconnectTimeout.current);
+        reconnectTimeout.current = null;
+      }
+
+      pingInterval.current = setInterval(() => {
+        if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+          ws.current.send("ping");
+        }
+      }, 30000);
+
+      if (ws.current.readyState === WebSocket.OPEN) {
+        ws.current.send(
+          JSON.stringify({
+            op: "subscribe",
+            args: [
+              {
+                instType: "mc",
+                channel: "ticker",
+                instId: symbol,
+              },
+            ],
+          })
+        );
+
+        ws.current.send(
+          JSON.stringify({
+            op: "subscribe",
+            args: [
+              {
+                instType: "mc",
+                channel: "trade",
+                instId: symbol,
+              },
+            ],
+          })
+        );
+      }
+    };
+
+    ws.current.onmessage = (event) => {
+      try {
+        if (event.data === "pong") {
+          return;
+        }
+
+        const data = JSON.parse(event.data);
+
+        if (data.data) {
+          if (data.arg?.channel === "ticker") {
+            updatePriceFromTicker(data.data[0]);
+          } else if (data.arg?.channel === "trade") {
+            updatePriceFromTrades(data.data);
+          }
+        }
+      } catch (error) {
+        console.error("Message parsing error:", error);
+      }
+    };
+
+    ws.current.onerror = (error) => {
+      console.error("WebSocket error:", error);
+      setConnected(false);
+    };
+
+    ws.current.onclose = () => {
+      console.log("WebSocket disconnected");
+      setConnected(false);
+
+      if (pingInterval.current) {
+        clearInterval(pingInterval.current);
+        pingInterval.current = null;
+      }
+
+      reconnectTimeout.current = setTimeout(() => {
+        console.log("Attempting to reconnect...");
+        connectWebSocket();
+      }, 5000);
+    };
+  }, [symbol]);
+
   useEffect(() => {
     const analyzeAndDisplay = () => {
       const now = Date.now();
@@ -152,102 +266,6 @@ const BitgetPriceMomentumAnalyzer = () => {
       }
     };
 
-    const connectWebSocket = () => {
-      if (ws.current && ws.current.readyState === WebSocket.CONNECTING) {
-        return;
-      }
-
-      if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-        ws.current.close();
-      }
-
-      ws.current = new WebSocket("wss://ws.bitget.com/mix/v1/stream");
-
-      ws.current.onopen = () => {
-        console.log("WebSocket connected");
-        setConnected(true);
-
-        if (reconnectTimeout.current) {
-          clearTimeout(reconnectTimeout.current);
-          reconnectTimeout.current = null;
-        }
-
-        pingInterval.current = setInterval(() => {
-          if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-            ws.current.send("ping");
-          }
-        }, 30000);
-
-        if (ws.current.readyState === WebSocket.OPEN) {
-          ws.current.send(
-            JSON.stringify({
-              op: "subscribe",
-              args: [
-                {
-                  instType: "mc",
-                  channel: "ticker",
-                  instId: symbol,
-                },
-              ],
-            })
-          );
-
-          ws.current.send(
-            JSON.stringify({
-              op: "subscribe",
-              args: [
-                {
-                  instType: "mc",
-                  channel: "trade",
-                  instId: symbol,
-                },
-              ],
-            })
-          );
-        }
-      };
-
-      ws.current.onmessage = (event) => {
-        try {
-          if (event.data === "pong") {
-            return;
-          }
-
-          const data = JSON.parse(event.data);
-
-          if (data.data) {
-            if (data.arg?.channel === "ticker") {
-              updatePriceFromTicker(data.data[0]);
-            } else if (data.arg?.channel === "trade") {
-              updatePriceFromTrades(data.data);
-            }
-          }
-        } catch (error) {
-          console.error("Message parsing error:", error);
-        }
-      };
-
-      ws.current.onerror = (error) => {
-        console.error("WebSocket error:", error);
-        setConnected(false);
-      };
-
-      ws.current.onclose = () => {
-        console.log("WebSocket disconnected");
-        setConnected(false);
-
-        if (pingInterval.current) {
-          clearInterval(pingInterval.current);
-          pingInterval.current = null;
-        }
-
-        reconnectTimeout.current = setTimeout(() => {
-          console.log("Attempting to reconnect...");
-          connectWebSocket();
-        }, 5000);
-      };
-    };
-
     connectWebSocket();
     const interval = setInterval(analyzeAndDisplay, 1000);
 
@@ -266,7 +284,12 @@ const BitgetPriceMomentumAnalyzer = () => {
         ws.current.close();
       }
     };
-  }, []);
+  }, [connectWebSocket, analyzeMomentum]);
+
+  const handleSymbolChange = (newSymbol) => {
+    setSymbol(newSymbol);
+    setIsDropdownOpen(false);
+  };
 
   const getSignalColor = (type) => {
     switch (type) {
@@ -311,13 +334,45 @@ const BitgetPriceMomentumAnalyzer = () => {
     }
   };
 
+  const selectedSymbol = symbols.find((s) => s.value === symbol);
+
   return (
     <div className="min-h-screen bg-gray-900 text-white p-4">
       <div className="max-w-6xl mx-auto">
         <div className="mb-6">
-          <h1 className="text-3xl font-bold mb-2">Price Momentum Analyzer</h1>
+          <h1 className="text-3xl font-bold mb-4">Price Momentum Analyzer</h1>
+
+          {/* 심볼 선택 드롭다운 */}
+          <div className="relative mb-4">
+            <button onClick={() => setIsDropdownOpen(!isDropdownOpen)} className="flex items-center gap-3 bg-gray-800 hover:bg-gray-700 px-4 py-3 rounded-lg transition-colors min-w-[200px]">
+              <span className="text-2xl">{selectedSymbol?.icon}</span>
+              <div className="flex-1 text-left">
+                <div className="font-semibold">{selectedSymbol?.label}</div>
+                <div className="text-sm text-gray-400">{symbol}</div>
+              </div>
+              <ChevronDown className={`w-5 h-5 transition-transform ${isDropdownOpen ? "rotate-180" : ""}`} />
+            </button>
+
+            {isDropdownOpen && (
+              <div className="absolute top-full left-0 mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-10 min-w-[200px]">
+                {symbols.map((symbolOption) => (
+                  <button
+                    key={symbolOption.value}
+                    onClick={() => handleSymbolChange(symbolOption.value)}
+                    className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-700 transition-colors ${symbol === symbolOption.value ? "bg-gray-700" : ""}`}
+                  >
+                    <span className="text-2xl">{symbolOption.icon}</span>
+                    <div className="flex-1 text-left">
+                      <div className="font-semibold">{symbolOption.label}</div>
+                      <div className="text-sm text-gray-400">{symbolOption.value}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="flex items-center gap-4">
-            <span className="text-xl">{symbol}</span>
             <span className="text-2xl font-mono">${currentPrice > 0 ? currentPrice.toFixed(2) : "---"}</span>
             <span className={`text-lg font-mono ${priceChange1s > 0 ? "text-green-400" : priceChange1s < 0 ? "text-red-400" : "text-gray-400"}`}>
               {priceChange1s > 0 ? "+" : ""}
